@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 import org.apache.tomcat.util.buf.MessageBytes;
 import org.apache.tomcat.util.http.MimeHeaders;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.lang.Nullable;
 import org.springframework.util.MultiValueMap;
 
@@ -38,15 +39,17 @@ import org.springframework.util.MultiValueMap;
  * {@code MultiValueMap} implementation for wrapping Tomcat HTTP headers.
  *
  * @author Brian Clozel
- * @since 5.1
+ * @since 5.1.1
  */
 class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 
 	private final MimeHeaders headers;
 
+
 	TomcatHeadersAdapter(MimeHeaders headers) {
 		this.headers = headers;
 	}
+
 
 	@Override
 	public String getFirst(String key) {
@@ -54,7 +57,7 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 	}
 
 	@Override
-	public void add(String key, String value) {
+	public void add(String key, @Nullable String value) {
 		this.headers.addValue(key).setString(value);
 	}
 
@@ -69,7 +72,7 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 	}
 
 	@Override
-	public void set(String key, String value) {
+	public void set(String key, @Nullable String value) {
 		this.headers.setValue(key).setString(value);
 	}
 
@@ -98,13 +101,13 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 
 	@Override
 	public boolean isEmpty() {
-		return this.headers.size() == 0;
+		return (this.headers.size() == 0);
 	}
 
 	@Override
 	public boolean containsKey(Object key) {
 		if (key instanceof String) {
-			return this.headers.findHeader((String) key, 0) != -1;
+			return (this.headers.findHeader((String) key, 0) != -1);
 		}
 		return false;
 	}
@@ -126,7 +129,7 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 	@Override
 	@Nullable
 	public List<String> get(Object key) {
-		if (key instanceof String) {
+		if (containsKey(key)) {
 			return Collections.list(this.headers.values((String) key));
 		}
 		return null;
@@ -136,6 +139,7 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 	@Nullable
 	public List<String> put(String key, List<String> value) {
 		List<String> previousValues = get(key);
+		this.headers.removeHeader(key);
 		value.forEach(v -> this.headers.addValue(key).setString(v));
 		return previousValues;
 	}
@@ -152,8 +156,8 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 	}
 
 	@Override
-	public void putAll(Map<? extends String, ? extends List<String>> m) {
-		m.forEach(this::put);
+	public void putAll(Map<? extends String, ? extends List<String>> map) {
+		map.forEach(this::put);
 	}
 
 	@Override
@@ -191,6 +195,13 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 		};
 	}
 
+
+	@Override
+	public String toString() {
+		return HttpHeaders.formatHeaders(this);
+	}
+
+
 	private class EntryIterator implements Iterator<Entry<String, List<String>>> {
 
 		private Enumeration<String> names = headers.names();
@@ -206,11 +217,12 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 		}
 	}
 
+
 	private final class HeaderEntry implements Entry<String, List<String>> {
 
 		private final String key;
 
-		private HeaderEntry(String key) {
+		HeaderEntry(String key) {
 			this.key = key;
 		}
 
@@ -234,4 +246,5 @@ class TomcatHeadersAdapter implements MultiValueMap<String, String> {
 			return previous;
 		}
 	}
+
 }

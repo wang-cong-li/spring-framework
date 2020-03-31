@@ -1,11 +1,11 @@
 /*
- * Copyright 2002-2018 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,11 +21,15 @@ import java.lang.reflect.Field;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+
 import javax.servlet.AsyncContext;
+import javax.servlet.ServletInputStream;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequestWrapper;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpServletResponseWrapper;
 
 import org.apache.catalina.connector.CoyoteInputStream;
 import org.apache.catalina.connector.CoyoteOutputStream;
@@ -48,7 +52,6 @@ import org.springframework.util.ReflectionUtils;
  *
  * @author Violeta Georgieva
  * @author Brian Clozel
- * @author Brian Clozel
  * @since 5.0
  * @see org.springframework.web.server.adapter.AbstractReactiveWebInitializer
  */
@@ -64,7 +67,7 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 	protected ServletServerHttpRequest createRequest(HttpServletRequest request, AsyncContext asyncContext)
 			throws IOException, URISyntaxException {
 
-		Assert.notNull(getServletPath(), "servletPath is not initialized.");
+		Assert.notNull(getServletPath(), "Servlet path is not initialized");
 		return new TomcatServerHttpRequest(
 				request, asyncContext, getServletPath(), getDataBufferFactory(), getBufferSize());
 	}
@@ -77,16 +80,20 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 				response, asyncContext, getDataBufferFactory(), getBufferSize(), request);
 	}
 
+
 	private static final class TomcatServerHttpRequest extends ServletServerHttpRequest {
 
-		private static final Field COYOTE_REQUEST_FIELD = ReflectionUtils.findField(RequestFacade.class, "request");
+		private static final Field COYOTE_REQUEST_FIELD;
 
 		private final int bufferSize;
 
 		private final DataBufferFactory factory;
 
 		static {
-			ReflectionUtils.makeAccessible(COYOTE_REQUEST_FIELD);
+			Field field = ReflectionUtils.findField(RequestFacade.class, "request");
+			Assert.state(field != null, "Incompatible Tomcat implementation");
+			ReflectionUtils.makeAccessible(field);
+			COYOTE_REQUEST_FIELD = field;
 		}
 
 		TomcatServerHttpRequest(HttpServletRequest request, AsyncContext context,
@@ -99,24 +106,44 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 		}
 
 		private static HttpHeaders createTomcatHttpHeaders(HttpServletRequest request) {
-			Request tomcatRequest = ((org.apache.catalina.connector.Request) ReflectionUtils
-					.getField(COYOTE_REQUEST_FIELD, request)).getCoyoteRequest();
+			RequestFacade requestFacade = getRequestFacade(request);
+			org.apache.catalina.connector.Request connectorRequest = (org.apache.catalina.connector.Request)
+					ReflectionUtils.getField(COYOTE_REQUEST_FIELD, requestFacade);
+			Assert.state(connectorRequest != null, "No Tomcat connector request");
+			Request tomcatRequest = connectorRequest.getCoyoteRequest();
 			TomcatHeadersAdapter headers = new TomcatHeadersAdapter(tomcatRequest.getMimeHeaders());
 			return new HttpHeaders(headers);
 		}
 
+		private static RequestFacade getRequestFacade(HttpServletRequest request) {
+			if (request instanceof RequestFacade) {
+				return (RequestFacade) request;
+			}
+			else if (request instanceof HttpServletRequestWrapper) {
+				HttpServletRequestWrapper wrapper = (HttpServletRequestWrapper) request;
+				HttpServletRequest wrappedRequest = (HttpServletRequest) wrapper.getRequest();
+				return getRequestFacade(wrappedRequest);
+			}
+			else {
+				throw new IllegalArgumentException("Cannot convert [" + request.getClass() +
+						"] to org.apache.catalina.connector.RequestFacade");
+			}
+		}
+
 		@Override
 		protected DataBuffer readFromInputStream() throws IOException {
+			ServletInputStream inputStream = ((ServletRequest) getNativeRequest()).getInputStream();
+			if (!(inputStream instanceof CoyoteInputStream)) {
+				// It's possible InputStream can be wrapped, preventing use of CoyoteInputStream
+				return super.readFromInputStream();
+			}
 			boolean release = true;
 			int capacity = this.bufferSize;
 			DataBuffer dataBuffer = this.factory.allocateBuffer(capacity);
 			try {
 				ByteBuffer byteBuffer = dataBuffer.asByteBuffer(0, capacity);
-
-				ServletRequest request = getNativeRequest();
-				int read = ((CoyoteInputStream) request.getInputStream()).read(byteBuffer);
+				int read = ((CoyoteInputStream) inputStream).read(byteBuffer);
 				logBytesRead(read);
-
 				if (read > 0) {
 					dataBuffer.writePosition(read);
 					release = false;
@@ -140,10 +167,13 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 
 	private static final class TomcatServerHttpResponse extends ServletServerHttpResponse {
 
-		private static final Field COYOTE_RESPONSE_FIELD = ReflectionUtils.findField(ResponseFacade.class, "response");
+		private static final Field COYOTE_RESPONSE_FIELD;
 
 		static {
-			ReflectionUtils.makeAccessible(COYOTE_RESPONSE_FIELD);
+			Field field = ReflectionUtils.findField(ResponseFacade.class, "response");
+			Assert.state(field != null, "Incompatible Tomcat implementation");
+			ReflectionUtils.makeAccessible(field);
+			COYOTE_RESPONSE_FIELD = field;
 		}
 
 		TomcatServerHttpResponse(HttpServletResponse response, AsyncContext context,
@@ -153,19 +183,45 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 		}
 
 		private static HttpHeaders createTomcatHttpHeaders(HttpServletResponse response) {
-			Response tomcatResponse = ((org.apache.catalina.connector.Response) ReflectionUtils
-					.getField(COYOTE_RESPONSE_FIELD, response)).getCoyoteResponse();
+			ResponseFacade responseFacade = getResponseFacade(response);
+			org.apache.catalina.connector.Response connectorResponse = (org.apache.catalina.connector.Response)
+					ReflectionUtils.getField(COYOTE_RESPONSE_FIELD, responseFacade);
+			Assert.state(connectorResponse != null, "No Tomcat connector response");
+			Response tomcatResponse = connectorResponse.getCoyoteResponse();
 			TomcatHeadersAdapter headers = new TomcatHeadersAdapter(tomcatResponse.getMimeHeaders());
 			return new HttpHeaders(headers);
+		}
+
+		private static ResponseFacade getResponseFacade(HttpServletResponse response) {
+			if (response instanceof ResponseFacade) {
+				return (ResponseFacade) response;
+			}
+			else if (response instanceof HttpServletResponseWrapper) {
+				HttpServletResponseWrapper wrapper = (HttpServletResponseWrapper) response;
+				HttpServletResponse wrappedResponse = (HttpServletResponse) wrapper.getResponse();
+				return getResponseFacade(wrappedResponse);
+			}
+			else {
+				throw new IllegalArgumentException("Cannot convert [" + response.getClass() +
+						"] to org.apache.catalina.connector.ResponseFacade");
+			}
 		}
 
 		@Override
 		protected void applyHeaders() {
 			HttpServletResponse response = getNativeResponse();
-			MediaType contentType = getHeaders().getContentType();
+			MediaType contentType = null;
+			try {
+				contentType = getHeaders().getContentType();
+			}
+			catch (Exception ex) {
+				String rawContentType = getHeaders().getFirst(HttpHeaders.CONTENT_TYPE);
+				response.setContentType(rawContentType);
+			}
 			if (response.getContentType() == null && contentType != null) {
 				response.setContentType(contentType.toString());
 			}
+			getHeaders().remove(HttpHeaders.CONTENT_TYPE);
 			Charset charset = (contentType != null ? contentType.getCharset() : null);
 			if (response.getCharacterEncoding() == null && charset != null) {
 				response.setCharacterEncoding(charset.name());
@@ -174,6 +230,7 @@ public class TomcatHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 			if (contentLength != -1) {
 				response.setContentLengthLong(contentLength);
 			}
+			getHeaders().remove(HttpHeaders.CONTENT_LENGTH);
 		}
 
 		@Override

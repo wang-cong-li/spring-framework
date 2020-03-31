@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+
 import javax.servlet.AsyncContext;
 import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
@@ -34,12 +35,14 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.util.Assert;
 
 /**
  * {@link ServletHttpHandlerAdapter} extension that uses Jetty APIs for writing
  * to the response with {@link ByteBuffer}.
  *
  * @author Violeta Georgieva
+ * @author Brian Clozel
  * @since 5.0
  * @see org.springframework.web.server.adapter.AbstractReactiveWebInitializer
  */
@@ -53,6 +56,8 @@ public class JettyHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 	@Override
 	protected ServletServerHttpRequest createRequest(HttpServletRequest request, AsyncContext context)
 			throws IOException, URISyntaxException {
+
+		Assert.notNull(getServletPath(), "Servlet path is not initialized");
 		return new JettyServerHttpRequest(request, context, getServletPath(), getDataBufferFactory(), getBufferSize());
 	}
 
@@ -63,6 +68,7 @@ public class JettyHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 		return new JettyServerHttpResponse(
 				response, context, getDataBufferFactory(), getBufferSize(), request);
 	}
+
 
 	private static final class JettyServerHttpRequest extends ServletServerHttpRequest {
 
@@ -96,8 +102,15 @@ public class JettyHttpHandlerAdapter extends ServletHttpHandlerAdapter {
 
 		@Override
 		protected void applyHeaders() {
-			MediaType contentType = getHeaders().getContentType();
 			HttpServletResponse response = getNativeResponse();
+			MediaType contentType = null;
+			try {
+				contentType = getHeaders().getContentType();
+			}
+			catch (Exception ex) {
+				String rawContentType = getHeaders().getFirst(HttpHeaders.CONTENT_TYPE);
+				response.setContentType(rawContentType);
+			}
 			if (response.getContentType() == null && contentType != null) {
 				response.setContentType(contentType.toString());
 			}

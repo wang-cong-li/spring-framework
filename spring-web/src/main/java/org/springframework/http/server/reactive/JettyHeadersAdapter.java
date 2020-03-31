@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.lang.Nullable;
 import org.springframework.util.MultiValueMap;
 
@@ -36,15 +37,17 @@ import org.springframework.util.MultiValueMap;
  * {@code MultiValueMap} implementation for wrapping Jetty HTTP headers.
  *
  * @author Brian Clozel
- * @since 5.1
+ * @since 5.1.1
  */
 class JettyHeadersAdapter implements MultiValueMap<String, String> {
 
 	private final HttpFields headers;
 
+
 	JettyHeadersAdapter(HttpFields headers) {
 		this.headers = headers;
 	}
+
 
 	@Override
 	public String getFirst(String key) {
@@ -95,30 +98,24 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 
 	@Override
 	public boolean isEmpty() {
-		return this.headers.size() == 0;
+		return (this.headers.size() == 0);
 	}
 
 	@Override
 	public boolean containsKey(Object key) {
-		if (key instanceof String) {
-			return this.headers.containsKey((String) key);
-		}
-		return false;
+		return (key instanceof String && this.headers.containsKey((String) key));
 	}
 
 	@Override
 	public boolean containsValue(Object value) {
-		if (value instanceof String) {
-			return this.headers.stream()
-					.anyMatch(field -> field.contains((String) value));
-		}
-		return false;
+		return (value instanceof String &&
+				this.headers.stream().anyMatch(field -> field.contains((String) value)));
 	}
 
 	@Nullable
 	@Override
 	public List<String> get(Object key) {
-		if (key instanceof String) {
+		if (containsKey(key)) {
 			return this.headers.getValuesList((String) key);
 		}
 		return null;
@@ -144,8 +141,8 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 	}
 
 	@Override
-	public void putAll(Map<? extends String, ? extends List<String>> m) {
-		m.forEach(this::put);
+	public void putAll(Map<? extends String, ? extends List<String>> map) {
+		map.forEach(this::put);
 	}
 
 	@Override
@@ -179,6 +176,13 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 		};
 	}
 
+
+	@Override
+	public String toString() {
+		return HttpHeaders.formatHeaders(this);
+	}
+
+
 	private class EntryIterator implements Iterator<Entry<String, List<String>>> {
 
 		private Enumeration<String> names = headers.getFieldNames();
@@ -194,6 +198,7 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 		}
 	}
 
+
 	private class HeaderEntry implements Entry<String, List<String>> {
 
 		private final String key;
@@ -204,7 +209,7 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 
 		@Override
 		public String getKey() {
-			return this.key.toString();
+			return this.key;
 		}
 
 		@Override
@@ -219,4 +224,5 @@ class JettyHeadersAdapter implements MultiValueMap<String, String> {
 			return previousValues;
 		}
 	}
+
 }

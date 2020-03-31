@@ -1,11 +1,11 @@
 /*
- * Copyright 2002-2018 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,6 +20,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.security.Principal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -33,6 +34,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.codec.DecodingException;
 import org.springframework.core.codec.Hints;
 import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpHeaders;
@@ -43,11 +45,13 @@ import org.springframework.http.codec.multipart.Part;
 import org.springframework.http.server.PathContainer;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.lang.Nullable;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyExtractor;
 import org.springframework.web.reactive.function.BodyExtractors;
 import org.springframework.web.reactive.function.UnsupportedMediaTypeException;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.ServerWebInputException;
 import org.springframework.web.server.UnsupportedMediaTypeStatusException;
 import org.springframework.web.server.WebSession;
 import org.springframework.web.util.UriBuilder;
@@ -67,6 +71,9 @@ class DefaultServerRequest implements ServerRequest {
 							ex.getContentType(), ex.getSupportedMediaTypes(), ex.getBodyType()) :
 					new UnsupportedMediaTypeStatusException(ex.getMessage()));
 
+	private static final Function<DecodingException, ServerWebInputException> DECODING_MAPPER =
+			ex -> new ServerWebInputException("Failed to read HTTP message", null, ex);
+
 
 	private final ServerWebExchange exchange;
 
@@ -81,6 +88,23 @@ class DefaultServerRequest implements ServerRequest {
 		this.headers = new DefaultHeaders();
 	}
 
+	static Mono<ServerResponse> checkNotModified(ServerWebExchange exchange, @Nullable Instant lastModified,
+			@Nullable String etag) {
+
+		if (lastModified == null) {
+			lastModified = Instant.MIN;
+		}
+
+		if (exchange.checkNotModified(etag, lastModified)) {
+			Integer statusCode = exchange.getResponse().getRawStatusCode();
+			return ServerResponse.status(statusCode != null ? statusCode : 200)
+					.headers(headers -> headers.addAll(exchange.getResponse().getHeaders()))
+					.build();
+		}
+		else {
+			return Mono.empty();
+		}
+	}
 
 	@Override
 	public String methodName() {
@@ -115,6 +139,11 @@ class DefaultServerRequest implements ServerRequest {
 	@Override
 	public Optional<InetSocketAddress> remoteAddress() {
 		return Optional.ofNullable(request().getRemoteAddress());
+	}
+
+	@Override
+	public Optional<InetSocketAddress> localAddress() {
+		return Optional.ofNullable(request().getLocalAddress());
 	}
 
 	@Override
@@ -154,25 +183,29 @@ class DefaultServerRequest implements ServerRequest {
 	@Override
 	public <T> Mono<T> bodyToMono(Class<? extends T> elementClass) {
 		Mono<T> mono = body(BodyExtractors.toMono(elementClass));
-		return mono.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER);
+		return mono.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER)
+				.onErrorMap(DecodingException.class, DECODING_MAPPER);
 	}
 
 	@Override
 	public <T> Mono<T> bodyToMono(ParameterizedTypeReference<T> typeReference) {
 		Mono<T> mono = body(BodyExtractors.toMono(typeReference));
-		return mono.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER);
+		return mono.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER)
+				.onErrorMap(DecodingException.class, DECODING_MAPPER);
 	}
 
 	@Override
 	public <T> Flux<T> bodyToFlux(Class<? extends T> elementClass) {
 		Flux<T> flux = body(BodyExtractors.toFlux(elementClass));
-		return flux.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER);
+		return flux.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER)
+				.onErrorMap(DecodingException.class, DECODING_MAPPER);
 	}
 
 	@Override
 	public <T> Flux<T> bodyToFlux(ParameterizedTypeReference<T> typeReference) {
 		Flux<T> flux = body(BodyExtractors.toFlux(typeReference));
-		return flux.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER);
+		return flux.onErrorMap(UnsupportedMediaTypeException.class, ERROR_MAPPER)
+				.onErrorMap(DecodingException.class, DECODING_MAPPER);
 	}
 
 	@Override
